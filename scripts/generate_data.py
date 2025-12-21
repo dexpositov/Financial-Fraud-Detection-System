@@ -129,10 +129,6 @@ def generate_disc_category_timestamp(start_date, discretionary_category, cat_day
 def generate_fixed_category_timestamp(start_date, day_range):
     """
     Generates a timestamp for a fixed expense (direct debit).
-    
-    Args:
-        start_date: Start date of the month.
-        day_range: Tuple (min_day, max_day) of the month where the charge occurs.
     """
     # Select a random day within the specified range
     day_offset = random.randint(day_range[0], day_range[1])
@@ -246,3 +242,29 @@ def generate_discretionary_expenses(num_transactions, customers, selection_probs
         })
         current_id += 1
     return data, current_id
+
+def create_base_transactions(customers, customer_assignments, customer_locations, selection_probs, 
+                             locations, fixed_categories, discretionary_categories, 
+                             fixed_penetration, fixed_ranges, num_transactions, start_date, 
+                             profiles_config, daily_category_multipliers, tx_width, start_tx_id):
+    """
+    Principal orchestrator. Returns the data and the next available transaction ID.
+    """
+    lognormal_params = precompute_lognormal_params(profiles_config)
+    profile_cat_weights = calculate_profile_category_weights(profiles_config, discretionary_categories)
+    cat_day_probs = get_disc_category_day_probs(discretionary_categories, daily_category_multipliers)
+    
+    # Fixed Expenses
+    fixed_data, next_id_fixed = generate_fixed_expenses(
+        customers, customer_assignments, customer_locations, lognormal_params, fixed_categories, 
+        fixed_penetration, fixed_ranges, start_date, locations, tx_width, start_tx_id
+    )
+
+    # Discretionary Expenses
+    variable_data, next_id_final = generate_discretionary_expenses(
+        num_transactions, customers, selection_probs, customer_assignments, customer_locations,
+        profiles_config, lognormal_params, discretionary_categories, cat_day_probs, 
+        profile_cat_weights, start_date, locations, tx_width, next_id_fixed
+    )
+
+    return fixed_data + variable_data, next_id_final
