@@ -21,6 +21,19 @@ def get_lognormal_params(mean, std):
     
     return mu, sigma
 
+def precompute_lognormal_params(profiles_config):
+    """
+    Calculates the mu and sigma parameters for each combination of Profile and Category.
+    Returns a nested dictionary for fast lookup.
+    """
+    precomputed = {}
+    for profile_name, config in profiles_config.items():
+        precomputed[profile_name] = {}
+        for category, (mean, std) in config["behaviors"].items():
+            mu, sigma = get_lognormal_params(mean, std)
+            precomputed[profile_name][category] = (mu, sigma)
+    return precomputed
+
 def assign_profiles(num_customers, profiles_config, assignment_weights):
     """
     Generates customer IDs and assigns a behavioral profile to each, 
@@ -131,13 +144,11 @@ def generate_fixed_category_timestamp(start_date, day_range):
     
     return start_date + timedelta(days=day_offset-1, hours=hour, minutes=minute, seconds=second)
 
-def generate_amount(profile, category, profiles_config):
+def generate_amount(profile, category, precomputed_params):
     """
     Generates the transaction amount based on the profile and category.
     """
-    # Access the specific behavior of the profile and category through the global configuration
-    m, s = profiles_config[profile]["behaviors"][category]
-    mu, sigma = get_lognormal_params(m, s)
+    mu, sigma = precomputed_params[profile][category]
     return round(np.random.lognormal(mean=mu, sigma=sigma), 2)
 
 def generate_fixed_expenses(customers, customer_assignments, customer_locations, profiles_config, fixed_categories, fixed_penetration, fixed_ranges, start_date, tx_width, start_tx_id):
