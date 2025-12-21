@@ -47,6 +47,20 @@ def assign_profiles(num_customers, profiles_config, assignment_weights):
     selection_probs = np.array(customer_selection_weights) / sum(customer_selection_weights) # Normalize weights to sum to 1 for selection
     return customers, customer_assignments, selection_probs
 
+def assign_locations(customers, locations, city_weights):
+    """
+    Assigns a Home Location to each customer based on demographic weights.
+    """
+    customer_locations = {}
+    
+    # Assign a fixed home city using the provided weights
+    assigned_cities = np.random.choice(locations, size=len(customers), p=city_weights)
+    
+    for i, cust_id in enumerate(customers):
+        customer_locations[cust_id] = assigned_cities[i]
+        
+    return customer_locations
+
 def get_disc_category_day_probs(discretionary_categories, daily_multipliers):
     """
     Calculates the probability that a discretionary category occurs on each day of the week.
@@ -81,7 +95,7 @@ def generate_bimodal_hour():
     else:
         return random.gauss(p2[0], p2[1])
 
-def generate_timestamp_from_disc_category(start_date, discretionary_category, cat_day_probs, days_range=30):
+def generate_disc_category_timestamp(start_date, discretionary_category, cat_day_probs, days_range=30):
     """
     Generates a timestamp based on the temporal preferences of the discretionary category.
     """
@@ -98,3 +112,31 @@ def generate_timestamp_from_disc_category(start_date, discretionary_category, ca
     
     decimal_hour = generate_bimodal_hour() # Generate decimal hour
     return base_date + timedelta(hours=decimal_hour)
+
+def generate_fixed_category_timestamp(start_date, day_range):
+    """
+    Generates a timestamp for a fixed expense (direct debit).
+    
+    Args:
+        start_date: Start date of the month.
+        day_range: Tuple (min_day, max_day) of the month where the charge occurs.
+    """
+    # Select a random day within the specified range
+    day_offset = random.randint(day_range[0], day_range[1])
+
+    # Direct debit charges are typically processed in batches at first hour (8:00 - 10:00 AM)
+    hour = random.randint(8, 9)
+    minute = random.randint(0, 59)
+    second = random.randint(0, 59)
+    
+    return start_date + timedelta(days=day_offset-1, hours=hour, minutes=minute, seconds=second)
+
+def generate_amount(profile, category, profiles_config):
+    """
+    Generates the transaction amount based on the profile and category.
+    """
+    # Access the specific behavior of the profile and category through the global configuration
+    m, s = profiles_config[profile]["behaviors"][category]
+    mu, sigma = get_lognormal_params(m, s)
+    return round(np.random.lognormal(mean=mu, sigma=sigma), 2)
+
