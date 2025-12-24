@@ -244,32 +244,6 @@ def generate_discretionary_expenses(num_transactions, customers, selection_probs
         current_id += 1
     return data, current_id
 
-def create_base_transactions(customers, customer_assignments, customer_locations, selection_probs, 
-                             locations, fixed_categories, discretionary_categories, 
-                             fixed_penetration, fixed_ranges, num_transactions, start_date, 
-                             profiles_config, daily_category_multipliers, tx_width, start_tx_id):
-    """
-    Principal orchestrator. Returns the data and the next available transaction ID.
-    """
-    lognormal_params = precompute_lognormal_params(profiles_config)
-    profile_cat_weights = calculate_profile_category_weights(profiles_config, discretionary_categories)
-    cat_day_probs = get_disc_category_day_probs(discretionary_categories, daily_category_multipliers)
-    
-    # Fixed Expenses
-    fixed_data, next_id_fixed = generate_fixed_expenses(
-        customers, customer_assignments, customer_locations, lognormal_params, fixed_categories, 
-        fixed_penetration, fixed_ranges, start_date, locations, tx_width, start_tx_id
-    )
-
-    # Discretionary Expenses
-    variable_data, next_id_final = generate_discretionary_expenses(
-        num_transactions, customers, selection_probs, customer_assignments, customer_locations,
-        profiles_config, lognormal_params, discretionary_categories, cat_day_probs, 
-        profile_cat_weights, start_date, locations, tx_width, next_id_fixed
-    )
-
-    return fixed_data + variable_data, next_id_final
-
 def get_fraud_date(start_date, days_range, hour_min, hour_max):
     """
     Generates a timestamp for fraudulent transactions within specified day and hour ranges.
@@ -379,3 +353,118 @@ def create_anomalies(customers, customer_locations, discretionary_categories, lo
         all_anomalies.extend(new_anomalies)
             
     return all_anomalies
+
+def create_all_transactions_data(customers, customer_assignments, customer_locations, selection_probs, 
+                             locations, fixed_categories, discretionary_categories, 
+                             fixed_penetration, fixed_ranges, num_transactions, start_date, 
+                             profiles_config, daily_category_multipliers, tx_width, start_tx_id, 
+                             num_anomalies_sets=120, days_range=(0, 30)):
+    """
+    Principal orchestrator. Returns the data and the next available transaction ID.
+    """
+    lognormal_params = precompute_lognormal_params(profiles_config)
+    profile_cat_weights = calculate_profile_category_weights(profiles_config, discretionary_categories)
+    cat_day_probs = get_disc_category_day_probs(discretionary_categories, daily_category_multipliers)
+    
+    # Fixed Expenses
+    fixed_data, next_id_fixed = generate_fixed_expenses(
+        customers, customer_assignments, customer_locations, lognormal_params, fixed_categories, 
+        fixed_penetration, fixed_ranges, start_date, locations, tx_width, start_tx_id
+    )
+
+    # Discretionary Expenses
+    variable_data, next_id_final = generate_discretionary_expenses(
+        num_transactions, customers, selection_probs, customer_assignments, customer_locations,
+        profiles_config, lognormal_params, discretionary_categories, cat_day_probs, 
+        profile_cat_weights, start_date, locations, tx_width, next_id_fixed
+    )
+    # Anomalies
+    anomalous_data, next_id_final = create_anomalies(
+        customers, customer_locations, discretionary_categories, locations, start_date,
+        tx_width, next_id_final, lognormal_params, customer_assignments, 
+        num_anomalies_sets, days_range
+    )
+
+    return fixed_data + variable_data + anomalous_data
+
+def main():
+    # Creation of the configuration parameters
+    fixed_categories = ["Housing", "Utilities"]
+    discretionary_categories = ["Travel", "Retail", "Groceries", "Leisure", "Others"]
+    fixed_penetration = {"Housing": 0.75, "Utilities": 0.85}
+    fixed_ranges = {"Housing": (1, 5), "Utilities": (1, 10)}
+    
+    daily_category_multipliers = {
+        "Wednesday": {"Others": 1.5, "Retail": 1.2},
+        "Friday":    {"Leisure": 2.0, "Travel": 1.5},
+        "Saturday":  {"Leisure": 3.0, "Groceries": 2.5, "Retail": 1.8},
+        "Sunday":    {"Leisure": 2.5, "Travel": 2.0}
+    }
+
+    profiles_config = {
+        "Thrifty": {
+            "frequency_weight": 0.35,
+            "category_weights": [0.0, 0.0, 0.05, 0.15, 0.50, 0.20, 0.10],
+            "behaviors": {
+                "Utilities": (60, 5), "Housing": (550, 20), "Travel": (40, 20), 
+                "Retail": (25, 10), "Groceries": (50, 15), "Leisure": (20, 10), "Others": (10, 5)
+            }
+        },
+        "Standard": {
+            "frequency_weight": 1.0,
+            "category_weights": [0.0, 0.0, 0.15, 0.20, 0.30, 0.20, 0.15],
+            "behaviors": {
+                "Utilities": (90, 15), "Housing": (900, 50), "Travel": (300, 150), 
+                "Retail": (80, 40), "Groceries": (80, 25), "Leisure": (70, 30), "Others": (30, 15)
+            }
+        },
+        "Well-off": {
+            "frequency_weight": 2.0,
+            "category_weights": [0.0, 0.0, 0.60, 0.15, 0.10, 0.10, 0.05],
+            "behaviors": {
+                "Utilities": (220, 40), "Housing": (3500, 300), "Travel": (3000, 1000), 
+                "Retail": (700, 300), "Groceries": (200, 50), "Leisure": (450, 150), "Others": (150, 60)
+            }
+        },
+        "Techie": {
+            "frequency_weight": 1.75,
+            "category_weights": [0.0, 0.0, 0.10, 0.60, 0.10, 0.15, 0.05],
+            "behaviors": {
+                "Utilities": (120, 25), "Housing": (1200, 100), "Travel": (500, 300), 
+                "Retail": (900, 500), "Groceries": (70, 20), "Leisure": (100, 40), "Others": (60, 30)
+            }
+        }
+    }
+    
+    profile_assignment_weights = [0.25, 0.55, 0.08, 0.12]
+    num_clients = 2000
+    num_discretionary_tx = 100000 
+    start_date = datetime(2026, 1, 1)
+    locations = ["Madrid", "Barcelona", "Valencia", "Sevilla", "Bilbao", "Zaragoza", "Malaga"]
+    city_weights = [0.3, 0.25, 0.15, 0.1, 0.05, 0.05, 0.1]
+    
+    customers, customer_assignments, selection_probs = assign_profiles(
+        num_clients, profiles_config, profile_assignment_weights)
+    
+    customer_locations = assign_locations(customers, locations, city_weights)
+    
+    estimated_total = num_discretionary_tx + (len(customers) * len(fixed_categories)) + 1000
+    tx_width = len(str(estimated_total))
+    
+    all_data = create_all_transactions_data(
+        customers, customer_assignments, customer_locations, selection_probs, 
+        locations, fixed_categories, discretionary_categories, 
+        fixed_penetration, fixed_ranges, num_discretionary_tx, start_date, 
+        profiles_config, daily_category_multipliers, tx_width, start_tx_id=1, 
+        num_anomalies_sets=120, days_range=(0, 30)
+    )
+
+    df = pd.DataFrame(all_data)
+    df = df.sort_values(by="Timestamp").reset_index(drop=True)
+    
+    output_file = "transactions_simulated.csv"
+    df.to_csv(output_file, index=False)
+
+    print(f"Dataset successfully generated: '{output_file}'")
+if __name__ == "__main__":
+    main()
