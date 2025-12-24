@@ -147,7 +147,8 @@ def generate_amount(profile, category, precomputed_params):
     mu, sigma = precomputed_params[profile][category]
     return round(np.random.lognormal(mean=mu, sigma=sigma), 2)
 
-def generate_fixed_expenses(customers, customer_assignments, customer_locations, profiles_config, fixed_categories, fixed_penetration, fixed_ranges, start_date, tx_width, start_tx_id):
+def generate_fixed_expenses(customers, customer_assignments, customer_locations, profiles_config, 
+                            fixed_categories, fixed_penetration, fixed_ranges, start_date, tx_width, start_tx_id):
     """
     Generates fixed expenses. The location is always the customer's home city.
     """
@@ -268,3 +269,113 @@ def create_base_transactions(customers, customer_assignments, customer_locations
     )
 
     return fixed_data + variable_data, next_id_final
+
+def get_fraud_date(start_date, days_range, hour_min, hour_max):
+    """
+    Generates a timestamp for fraudulent transactions within specified day and hour ranges.
+    """
+    min_day, max_day = days_range
+        
+    day_offset = random.randint(min_day, max_day)
+    
+    if hour_min > hour_max: # Overnight range
+        possible_hours = list(range(hour_min, 24)) + list(range(0, hour_max + 1))
+        hour = random.choice(possible_hours)
+    else:
+        hour = random.randint(hour_min, hour_max)
+        
+    return start_date + timedelta(days=day_offset, hours=hour, minutes=random.randint(0, 59))
+
+def generate_velocity_fraud(target_client, home_city, category, start_date, days_range, tx_width, current_id, batch_suffix, attack_location):
+    """
+    Generates a velocity fraud attack.
+    """
+    anomalies = []
+    base_time = get_fraud_date(start_date, days_range, 2, 6)
+    
+    num_attacks = random.randint(5, 15)
+    
+    for j in range(num_attacks): 
+        anomalies.append({
+            "Transaction_ID": f"FRD-{current_id:0{tx_width}d}",
+            "Customer_ID": target_client, 
+            "Customer_Profile": "Unknown",
+            "Customer_Home": home_city,
+            "Amount": round(random.uniform(5, 25), 2), 
+            "Timestamp": base_time + timedelta(minutes=j*1),
+            "Terminal_ID": f"TERM_VEL_{batch_suffix}",
+            "Category": category, 
+            "Location": attack_location,
+            "Is_Fixed": 0, 
+            "Is_Fraud": 1
+        })
+        current_id += 1
+    return anomalies, current_id
+
+def generate_magnitude_fraud(target_client, profile_name, home_city, category, start_date, days_range, tx_width, current_id, batch_suffix, attack_location, lognormal_params):
+    """
+    Generates a magnitude fraud attack relative to the client's profile.
+    Calculates a normal expense for their profile and multiplies it by a risk factor (10x - 20x).
+    """
+    anomalies = []
+    date = get_fraud_date(start_date, days_range, 3, 7)
+
+    # Generates a "normal" amount for that client in that category
+    base_amount = generate_amount(profile_name, category, lognormal_params)
+
+    fraud_multiplier = random.uniform(10, 20) # Applies a massive multiplier to create the anomaly
+    fraud_amount = round(base_amount * fraud_multiplier, 2)
+    
+    anomalies.append({
+        "Transaction_ID": f"FRD-{current_id:0{tx_width}d}",
+        "Customer_ID": target_client, 
+        "Customer_Profile": profile_name,
+        "Customer_Home": home_city,
+        "Amount": fraud_amount, 
+        "Timestamp": date,
+        "Terminal_ID": f"TERM_BIG_{batch_suffix}",
+        "Category": category, 
+        "Location": attack_location, 
+        "Is_Fixed": 0, 
+        "Is_Fraud": 1
+    })
+    current_id += 1
+    return anomalies, current_id
+
+def create_anomalies(customers, customer_locations, discretionary_categories, locations, start_date, tx_width, 
+                     start_tx_id, lognormal_params, customer_assignments, num_anomalies_sets=120, days_range=(0, 30)):
+    """
+    Generates a set of fraud anomalies (velocity and magnitude) for random customers.
+    """
+    all_anomalies = []
+    current_id = start_tx_id
+    
+    retail_cat = "Retail" if "Retail" in discretionary_categories else discretionary_categories[-1]
+    travel_cat = "Travel" if "Travel" in discretionary_categories else discretionary_categories[-1]
+    
+    for i in range(num_anomalies_sets):
+        # Numeric selection of the type of fraud (0: Velocity, 1: Magnitude)
+        anomaly_type = random.choice([0, 1])
+        batch_suffix = f"{i+1:03d}"
+        target_client = random.choice(customers)
+        home_city = customer_locations[target_client] 
+        profile_name = customer_assignments[target_client]
+        
+        new_anomalies = []
+        
+        if anomaly_type == 0: # Velocity Fraud
+            attack_loc = random.choice(locations)
+            new_anomalies, current_id = generate_velocity_fraud(target_client, home_city, retail_cat, 
+                                start_date, days_range, tx_width, current_id, batch_suffix, attack_loc)
+            
+        elif anomaly_type == 1: # Magnitude Fraud
+            # Magnitude fraud in a different city
+            possible_locs = [loc for loc in locations if loc != home_city]
+            attack_loc = random.choice(possible_locs) if possible_locs else home_city
+            
+            new_anomalies, current_id = generate_magnitude_fraud(target_client, profile_name, home_city, 
+            travel_cat, start_date, days_range, tx_width, current_id, batch_suffix, attack_loc, lognormal_params)
+            
+        all_anomalies.extend(new_anomalies)
+            
+    return all_anomalies
