@@ -163,7 +163,7 @@ def generate_fixed_expenses(customers, customer_assignments, customer_locations,
             penetration = fixed_penetration.get(cat, 1.0)
             if random.random() < penetration:
                 day_range = fixed_ranges.get(cat, (1, 28))
-                date = generate_fixed_category_timestamp(start_date, cat, day_range)
+                date = generate_fixed_category_timestamp(start_date, day_range)
                 amount = generate_amount(prof_name, cat, profiles_config)
                 
                 data.append({
@@ -369,17 +369,16 @@ def create_all_transactions_data(customers, customer_assignments, customer_locat
     # Fixed Expenses
     fixed_data, next_id_fixed = generate_fixed_expenses(
         customers, customer_assignments, customer_locations, lognormal_params, fixed_categories, 
-        fixed_penetration, fixed_ranges, start_date, locations, tx_width, start_tx_id
-    )
+        fixed_penetration, fixed_ranges, start_date, tx_width, start_tx_id)
 
     # Discretionary Expenses
     variable_data, next_id_final = generate_discretionary_expenses(
         num_transactions, customers, selection_probs, customer_assignments, customer_locations,
-        profiles_config, lognormal_params, discretionary_categories, cat_day_probs, 
+        lognormal_params, discretionary_categories, cat_day_probs, 
         profile_cat_weights, start_date, locations, tx_width, next_id_fixed
     )
     # Anomalies
-    anomalous_data, next_id_final = create_anomalies(
+    anomalous_data = create_anomalies(
         customers, customer_locations, discretionary_categories, locations, start_date,
         tx_width, next_id_final, lognormal_params, customer_assignments, 
         num_anomalies_sets, days_range
@@ -466,5 +465,6 @@ def main():
     df.to_csv(output_file, index=False)
 
     print(f"Dataset successfully generated: '{output_file}'")
+
 if __name__ == "__main__":
     main()
