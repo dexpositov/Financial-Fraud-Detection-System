@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import random
+import os
 from datetime import datetime, timedelta
 
 # Seed configuration for reproducibility
@@ -461,10 +462,12 @@ def main():
     df = pd.DataFrame(all_data)
     df = df.sort_values(by="Timestamp").reset_index(drop=True)
     
-    output_file = "transactions_simulated.csv"
+    output_dir = "data"
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+        
+    output_file = os.path.join(output_dir, "transactions_simulated.csv")
     df.to_csv(output_file, index=False)
-
-    print(f"Dataset successfully generated: '{output_file}'")
 
 if __name__ == "__main__":
     main()
