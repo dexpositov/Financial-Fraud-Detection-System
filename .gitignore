@@ -42,3 +42,7 @@ Thumbs.db
 
 #VScode
 .vscode/
+
+#Modelos
+
+*.pkl
