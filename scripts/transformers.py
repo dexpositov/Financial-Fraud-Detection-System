@@ -2,10 +2,6 @@
 import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
 import numpy as np
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
-from sklearn.cluster import KMeans
-
 
 class FraudPreprocessor(BaseEstimator, TransformerMixin):
     def __init__(self, kmeans_pipeline):
