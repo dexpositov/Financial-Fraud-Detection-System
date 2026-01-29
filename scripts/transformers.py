@@ -1,4 +1,3 @@
-
 import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
 import numpy as np
@@ -7,12 +6,43 @@ class FraudPreprocessor(BaseEstimator, TransformerMixin):
     def __init__(self, kmeans_pipeline):
         """
         kmeans_pipeline: Pre-trained clustering pipeline (.pkl)
-        transaction_df: Transaction dataframe to preprocess 
+        transaction_df: Transaction dataframe to preprocess
         """
         self.kmeans_pipeline = kmeans_pipeline
+        self.customer_profiles = None  # To store customer profiles (the fit method will do it)
+        self.defaults = {} # To store default values for new customers
 
     def fit(self, X, y=None):
-        # Our k-means pipline is pre-trained, so we do not need to fit anything here.
+        '''
+        Fit method to extract the profile of customers and compute default values for new customers.'''
+        # Extract customer profiles from the transaction data
+        self.customer_profiles = self.txn_to_customer_features(X, self.kmeans_pipeline)
+
+        # Predict cluster IDs and distances
+        cluster_ids = self.kmeans_pipeline.predict(self.customer_profiles)
+        centroid_distances = self.kmeans_pipeline.transform(self.customer_profiles)
+
+        self.customer_profiles['Cluster_ID'] = cluster_ids
+        for i in range(centroid_distances.shape[1]):
+            self.customer_profiles[f'Distance_to_Centroid_{i}'] = centroid_distances[:, i]
+
+        # Compute the default parameters for new customers based on Standard customer profile (Cluster 2)
+        default_mask = (self.customer_profiles['Cluster_ID'] == 2)
+        if not default_mask.any():
+            print("⚠️ Using overall mean for default customer profile as no Standard customers were found in the data.")
+            default_mask = slice(None) # Select all rows
+
+        self.defaults = {col: self.customer_profiles.loc[default_mask, col].mean() for col in self.kmeans_pipeline.named_steps['scaler'].feature_names_in_}
+        
+        self.defaults['Cluster_ID'] = 2  # Default cluster is Standard Customers
+
+        centroids = self.kmeans_pipeline.named_steps['kmeans'].cluster_centers_
+        c2_center = centroids[2]
+
+        # Store default distances to centroids for new customers
+        for i in range(centroid_distances.shape[1]):
+            self.defaults[f'Distance_to_Centroid_{i}'] = np.linalg.norm(c2_center - centroids[i])
+
         return self
 
     def transform(self, X):
@@ -27,32 +57,34 @@ class FraudPreprocessor(BaseEstimator, TransformerMixin):
         df['Hour'] = df['Timestamp'].dt.hour
         
         # Is_Night feature: 1 if transaction is between 2 AM and 8 AM
-        df['Is_Night'] = df['Hour'].apply(lambda x: 1 if 2 <= x < 8 else 0)
+        df['Is_Night'] = np.where((df['Hour'] >= 2) & (df['Hour'] < 8), 1, 0)
         
         # CLUSTERING FEATURES
-        # Use the static method to extract customer features
-        df_clients = self.txn_to_customer_features(df, self.kmeans_pipeline)
-
-        # Predict cluster IDs and distances
-        cluster_ids = self.kmeans_pipeline.predict(df_clients)
-        centroid_distances = self.kmeans_pipeline.named_steps['kmeans'].transform(df_clients)
+        # Copy customer profiles to avoid modifying the original during transform
+        df_clients = self.customer_profiles.copy()
+        # Select relevant columns to merge
+        cols_to_merge = ['Avg_Ticket', 'Std_Ticket', 'Cluster_ID']
+        # Add distance to centroid columns
+        n_clusters = self.kmeans_pipeline.named_steps['kmeans'].cluster_centers_.shape[0]
+        dist_cols = [f'Distance_to_Centroid_{i}' for i in range(n_clusters)]
+        cols_to_merge.extend(dist_cols)
  
-        # Map distances and IDs back to the original dataframe
-        for i in range(centroid_distances.shape[1]):
-            df[f'Distance_to_Centroid_{i}'] = df["Customer_ID"].map(dict(zip(df_clients.index, centroid_distances[:, i])))
-
-        df['Cluster_ID'] = df["Customer_ID"].map(dict(zip(df_clients.index, cluster_ids)))
+        # Use a left join to add the client features to transactions
+        df = df.merge(df_clients[cols_to_merge], left_on='Customer_ID', right_index=True, how='left', suffixes=('', '_drop'))
+        # Drop the extra columns created by the merge (there should be no overlap, but just to be safe)
+        df.drop([col for col in df.columns if '_drop' in col], axis=1, inplace=True)
+        # For new customers (NaNs), fill with default values
+        df.fillna(self.defaults, inplace=True)
+        # Ensure Cluster_ID is integer
+        df['Cluster_ID'] = df['Cluster_ID'].astype(int)
 
         # AMOUNT FEATURES
-        # Average Ticket per Customer
-        df['Avg_Ticket'] = df['Customer_ID'].map(dict(zip(df_clients.index, df_clients['Avg_Ticket'])))
-        
+        # Average Ticket per Customer is already merged from customer profiles
         # MAGNITUDE RELATED FEATURES (Amount Ratio)
         df['Amount_Ratio'] = df['Amount'] / df['Avg_Ticket']
         
         # VELOCITY RELATED FEATURES (Time Since Last)
-        # Sort by Customer_ID and Timestamp (Customer ID is not needed to be sorted, but for clarity), then group by Customer_ID and calculate time difference in seconds
-        
+        # Sort by Customer_ID and Timestamp, then group by Customer_ID and calculate time difference in seconds
         df['Time_Since_Last'] = df.sort_values(['Customer_ID', 'Timestamp']).groupby('Customer_ID')['Timestamp'].diff().dt.total_seconds()
 
         # Fill NaN values (first transaction for each customer) with the average time difference for that customer
@@ -71,19 +103,23 @@ class FraudPreprocessor(BaseEstimator, TransformerMixin):
 
         # LOCATION FEATURES
         # Flag if the transaction location is different from the customer's home location
-        df['Is_Foreign'] = df.apply(lambda x: 1 if x['Customer_Home'] != x['Location'] else 0, axis=1)
+        df['Is_Foreign'] = np.where(df['Customer_Home'] != df['Location'], 1, 0)
         
-        # FINAL CLEANUP
+        # FINAL FEATURE SELECTION AND RETURNING THE DATAFRAME
         # Select relevant features for the model (One-Hot Encoding is done later in the pipeline)
 
-        features_finales = [
-            'Amount', 'Amount_Ratio', 'Hour', 'Category', 'Is_Night', 'Is_Fixed',
-            'Time_Since_Last', 'Transactions_Last_Hour', 'Is_Foreign', 'Avg_Ticket',
-            'Cluster_ID', 'Distance_to_Centroid_0', 'Distance_to_Centroid_1', 
-            'Distance_to_Centroid_2', 'Distance_to_Centroid_3'
+        base_features = [
+            'Amount', 'Amount_Ratio', 'Hour', 'Category', 'Is_Night', 
+            'Is_Fixed', 'Time_Since_Last', 'Transactions_Last_Hour', 
+            'Is_Foreign', 'Avg_Ticket', 'Std_Ticket', 'Cluster_ID'
         ]
-        
-        return df[features_finales]
+
+        final_features = base_features + dist_cols
+
+        if df.isnull().any().any():
+            raise ValueError("⚠️ NaN values found in the transformed dataframe. Please check the preprocessing steps.")
+
+        return df[final_features]
     
     @staticmethod
     def txn_to_customer_features(transaction_df, kmeans_pipeline):
@@ -127,7 +163,7 @@ class FraudPreprocessor(BaseEstimator, TransformerMixin):
         cat_pct.columns = [f'Pct_{c}' for c in cat_pct.columns]
 
         # Join to create the input vector X_customers
-        customer_data = customer_features.join(cat_pct, how='left').fillna(0) # Fill NaNs just to make it robust (our generated data does not have NaNs)
+        customer_data = customer_features.join(cat_pct, how='left').fillna(0) # Fill NaNs just to make it robust (our generated data does not have gaps when doing the left join)
 
         # Ensure columns are in the exact same order as training
         # We can get the feature names from the scaler inside the pipeline
