@@ -19,8 +19,11 @@ class FraudPreprocessor(BaseEstimator, TransformerMixin):
         self.customer_profiles = None
         self.defaults = {}
 
+        X_copy = X.copy()
+        X_copy['Is_Fraud'] = y.values if y is not None else 0
+
         # Extract customer profiles from the transaction data
-        self.customer_profiles = self.txn_to_customer_features(X, self.kmeans_pipeline)
+        self.customer_profiles = self.txn_to_customer_features(X_copy, self.kmeans_pipeline)
 
         # Predict cluster IDs and distances
         cluster_ids = self.kmeans_pipeline.predict(self.customer_profiles)
@@ -28,7 +31,7 @@ class FraudPreprocessor(BaseEstimator, TransformerMixin):
 
         self.customer_profiles['Cluster_ID'] = cluster_ids
         for i in range(centroid_distances.shape[1]):
-            self.customer_profiles[f'Distance_to_Centroid_{i}'] = centroid_distances[:, i]
+            self.customer_profiles[f'Distance_to_Centroid_{i}'] = centroid_distances.iloc[:, i].values
 
         # Compute the default parameters for new customers based on Standard customer profile (Cluster 2)
         default_mask = (self.customer_profiles['Cluster_ID'] == 2)
@@ -101,7 +104,7 @@ class FraudPreprocessor(BaseEstimator, TransformerMixin):
         # Now, we compute the number of transaction made by the customer in the last hour. We use rolling window for that.
         # First, we sort the dataframe by Customer_ID and Timestamp
         df = df.sort_values(['Customer_ID', 'Timestamp'])
-        hour_counts = df.set_index('Timestamp').groupby('Customer_ID')['Transaction_ID'].rolling('1H').count() - 1
+        hour_counts = df.set_index('Timestamp').groupby('Customer_ID')['Transaction_ID'].rolling('1h').count() - 1
         df['Transactions_Last_Hour'] = hour_counts.values
 
         # LOCATION FEATURES
