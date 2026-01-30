@@ -15,6 +15,10 @@ class FraudPreprocessor(BaseEstimator, TransformerMixin):
     def fit(self, X, y=None):
         '''
         Fit method to extract the profile of customers and compute default values for new customers.'''
+        # Reset customer profiles and defaults
+        self.customer_profiles = None
+        self.defaults = {}
+
         # Extract customer profiles from the transaction data
         self.customer_profiles = self.txn_to_customer_features(X, self.kmeans_pipeline)
 
@@ -75,7 +79,7 @@ class FraudPreprocessor(BaseEstimator, TransformerMixin):
         df.drop([col for col in df.columns if '_drop' in col], axis=1, inplace=True)
         # For new customers (NaNs), fill with default values
         df.fillna(self.defaults, inplace=True)
-        # Ensure Cluster_ID is integer
+        # Ensure Cluster_ID is integer for the One-Hot Encoding later
         df['Cluster_ID'] = df['Cluster_ID'].astype(int)
 
         # AMOUNT FEATURES
@@ -99,7 +103,6 @@ class FraudPreprocessor(BaseEstimator, TransformerMixin):
         df = df.sort_values(['Customer_ID', 'Timestamp'])
         hour_counts = df.set_index('Timestamp').groupby('Customer_ID')['Transaction_ID'].rolling('1H').count() - 1
         df['Transactions_Last_Hour'] = hour_counts.values
-        df = df.sort_index()  # Restore original order
 
         # LOCATION FEATURES
         # Flag if the transaction location is different from the customer's home location
@@ -107,6 +110,7 @@ class FraudPreprocessor(BaseEstimator, TransformerMixin):
         
         # FINAL FEATURE SELECTION AND RETURNING THE DATAFRAME
         # Select relevant features for the model (One-Hot Encoding is done later in the pipeline)
+        df = df.sort_index()  # Restore original order
 
         base_features = [
             'Amount', 'Amount_Ratio', 'Hour', 'Category', 'Is_Night', 
