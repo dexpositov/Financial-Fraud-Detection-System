@@ -70,9 +70,10 @@ A key engineering highlight is the **`FraudPreprocessor`** class, built from scr
 
 ## Pipeline Workflow
 ```mermaid
-A[Raw Data] --> B(FraudPreprocessor (K-Means ))
-B --> C{Column Transformer (OHE)}
-C --> D[XGBoost Classifier]
+graph LR
+    A[Raw Data] --> B("FraudPreprocessor (KMeans embedded)")
+    B --> C{"Column Transformer (OHE)"}
+    C --> D[XGBoost Classifier]
 ```
 
 ## 📂 Repository Structure
